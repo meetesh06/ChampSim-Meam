@@ -31,6 +31,7 @@
 #include "util/algorithm.h"
 #include "util/span.h"
 #include <fmt/core.h>
+#include "glob_profiler.h"
 
 CACHE::tag_lookup_type::tag_lookup_type(request_type req, bool local_pref, bool skip)
     : address(req.address), v_address(req.v_address), data(req.data), ip(req.ip), instr_id(req.instr_id), pf_metadata(req.pf_metadata), cpu(req.cpu),
@@ -674,6 +675,48 @@ void CACHE::initialize()
 {
   impl_prefetcher_initialize();
   impl_initialize_replacement();
+  // Profiler Init -- START
+  mutation = [&] (const nlohmann::json & r) {
+    nlohmann::json j = r;
+    uint64_t oldPfReq =  j["CACHE"][NAME]["pf_requested"].template get<uint64_t>();
+    uint64_t oldPfIssued =  j["CACHE"][NAME]["pf_issued"].template get<uint64_t>();
+    uint64_t oldPfUseful =  j["CACHE"][NAME]["pf_useful"].template get<uint64_t>();
+    uint64_t oldPfUseless =  j["CACHE"][NAME]["pf_useless"].template get<uint64_t>();
+    uint64_t oldPfFill =  j["CACHE"][NAME]["pf_fill"].template get<uint64_t>();
+    uint64_t oldMissLatency =  j["CACHE"][NAME]["miss_latency"].template get<uint64_t>();
+    j["CACHE"][NAME]["pf_requested"] = sim_stats.pf_requested;
+    j["CACHE"][NAME]["pf_issued"] = sim_stats.pf_issued;
+    j["CACHE"][NAME]["pf_useful"] = sim_stats.pf_useful;
+    j["CACHE"][NAME]["pf_useless"] = sim_stats.pf_useless;
+    j["CACHE"][NAME]["pf_fill"] = sim_stats.pf_fill;
+    j["CACHE"][NAME]["miss_latency"] = sim_stats.total_miss_latency;
+    j["CACHE"][NAME]["local_pf_requested"] = sim_stats.pf_requested - oldPfReq;
+    j["CACHE"][NAME]["local_pf_issued"] = sim_stats.pf_issued - oldPfIssued;
+    j["CACHE"][NAME]["local_pf_useful"] = sim_stats.pf_useful - oldPfUseful;
+    j["CACHE"][NAME]["local_pf_useless"] = sim_stats.pf_useless - oldPfUseless;
+    j["CACHE"][NAME]["local_pf_fill"] = sim_stats.pf_fill - oldPfFill;
+    j["CACHE"][NAME]["local_miss_latency"] = sim_stats.total_miss_latency - oldMissLatency;
+    j["CACHE"][NAME]["mshr_occupancy_ratio"] = get_mshr_occupancy_ratio();
+    j["CACHE"][NAME]["hits"] = 0;
+    j["CACHE"][NAME]["misses"] = 0;
+    return j;
+  };
+  GlobalProfiler::registerMutation(mutation);
+  GlobalProfiler::_state["CACHE"][NAME]["pf_requested"] = 0;
+  GlobalProfiler::_state["CACHE"][NAME]["pf_issued"] = 0;
+  GlobalProfiler::_state["CACHE"][NAME]["pf_useful"] = 0;
+  GlobalProfiler::_state["CACHE"][NAME]["pf_useless"] = 0;
+  GlobalProfiler::_state["CACHE"][NAME]["pf_fill"] = 0;
+  GlobalProfiler::_state["CACHE"][NAME]["miss_latency"] = 0;
+  GlobalProfiler::_state["CACHE"][NAME]["local_pf_requested"] = 0;
+  GlobalProfiler::_state["CACHE"][NAME]["local_pf_issued"] = 0;
+  GlobalProfiler::_state["CACHE"][NAME]["local_pf_useful"] = 0;
+  GlobalProfiler::_state["CACHE"][NAME]["local_pf_useless"] = 0;
+  GlobalProfiler::_state["CACHE"][NAME]["local_pf_fill"] = 0;
+  GlobalProfiler::_state["CACHE"][NAME]["local_miss_latency"] = 0;
+  GlobalProfiler::_state["CACHE"][NAME]["mshr_occupancy_ratio"] = 0;
+  GlobalProfiler::_state["CACHE"][NAME]["hits"] = 0;
+  GlobalProfiler::_state["CACHE"][NAME]["misses"] = 0;
 }
 
 void CACHE::begin_phase()

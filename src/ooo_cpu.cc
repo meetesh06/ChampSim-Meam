@@ -29,7 +29,7 @@
 #include <fmt/chrono.h>
 #include <fmt/core.h>
 #include <fmt/ranges.h>
-
+#include <iostream>
 std::chrono::seconds elapsed_time();
 
 long O3_CPU::operate()
@@ -75,12 +75,42 @@ void O3_CPU::initialize()
   // BRANCH PREDICTOR & BTB
   impl_initialize_branch_predictor();
   impl_initialize_btb();
+  // Profiler Init -- START
+  mutation = [&] (const nlohmann::json & r) {
+    nlohmann::json j = r;
+    double oldNumRetired = j["CPU"][cpu]["num_retired"].template get<double>();
+    double oldCycle = j["CPU"][cpu]["current_cycle"].template get<double>();
+    j["CPU"][cpu]["local_IPC"] = (double) ((double)num_retired - oldNumRetired) / ( (double)current_cycle - oldCycle);
+    j["CPU"][cpu]["num_retired"] = num_retired;
+    j["CPU"][cpu]["current_cycle"] = current_cycle;
+    j["CPU"][cpu]["global_IPC"] = (double) ( ((double)num_retired - begin_phase_instr)/(current_cycle - begin_phase_cycle)); 
+    j["CPU"][cpu]["ireads_issued"] = issued_ireads;
+    j["CPU"][cpu]["dreads_issued"] = issued_dreads;
+    j["CPU"][cpu]["writes_issued"] = issued_writes; 
+    j["CPU"][cpu]["branch_mispredictions"] = branch_mispredictions; 
+    return j;
+  };
+  GlobalProfiler::registerMutation(mutation);
+  GlobalProfiler::_state["CPU"] = {};
+  GlobalProfiler::_state["CPU"][cpu] = {};
+  GlobalProfiler::_state["CPU"][cpu]["num_retired"] = num_retired;
+  GlobalProfiler::_state["CPU"][cpu]["current_cycle"] = current_cycle;
+  GlobalProfiler::_state["CPU"][cpu]["local_IPC"] = (double) 0.0;
+  GlobalProfiler::_state["CPU"][cpu]["global_IPC"] = (double) num_retired/current_cycle; 
+  GlobalProfiler::_state["CPU"][cpu]["ireads_issued"] = 0;
+  GlobalProfiler::_state["CPU"][cpu]["dreads_issued"] = 0;
+  GlobalProfiler::_state["CPU"][cpu]["writes_issued"] = 0;
+  GlobalProfiler::_state["CPU"][cpu]["branch_mispredictions"] = 0; 
+  // Profiler Init -- END
 }
 
 void O3_CPU::begin_phase()
 {
   begin_phase_instr = num_retired;
   begin_phase_cycle = current_cycle;
+
+  GlobalProfiler::_state["CPU"][cpu]["num_retired"] = num_retired;
+  GlobalProfiler::_state["CPU"][cpu]["current_cycle"] = current_cycle;
 
   // Record where the next phase begins
   stats_type stats;
@@ -170,6 +200,7 @@ bool O3_CPU::do_predict_branch(ooo_model_instr& arch_instr)
       sim_stats.total_rob_occupancy_at_branch_mispredict += std::size(ROB);
       sim_stats.branch_type_misses[arch_instr.branch_type]++;
       if (!warmup) {
+        branch_mispredictions++;
         fetch_resume_cycle = std::numeric_limits<uint64_t>::max();
         stop_fetch = true;
         arch_instr.branch_mispredicted = 1;
@@ -268,7 +299,7 @@ bool O3_CPU::do_fetch_instruction(std::deque<ooo_model_instr>::iterator begin, s
     fmt::print("[IFETCH] {} instr_id: {} ip: {:#x} dependents: {} event_cycle: {}\n", __func__, begin->instr_id, begin->ip,
                std::size(fetch_packet.instr_depend_on_me), begin->event_cycle);
   }
-
+  issued_ireads++;
   return L1I_bus.issue_read(fetch_packet);
 }
 
@@ -518,7 +549,7 @@ bool O3_CPU::do_complete_store(const LSQ_ENTRY& sq_entry)
   if constexpr (champsim::debug_print) {
     fmt::print("[SQ] {} instr_id: {} vaddr: {:x}\n", __func__, data_packet.instr_id, data_packet.v_address);
   }
-
+  issued_writes++; // For Profiler
   return L1D_bus.issue_write(data_packet);
 }
 
@@ -532,7 +563,7 @@ bool O3_CPU::execute_load(const LSQ_ENTRY& lq_entry)
   if constexpr (champsim::debug_print) {
     fmt::print("[LQ] {} instr_id: {} vaddr: {:#x}\n", __func__, data_packet.instr_id, data_packet.v_address);
   }
-
+  issued_dreads++; // For Profiler
   return L1D_bus.issue_read(data_packet);
 }
 
@@ -619,6 +650,7 @@ long O3_CPU::handle_memory_return()
   return progress;
 }
 
+static uint64_t lastRetired = 0;
 long O3_CPU::retire_rob()
 {
   auto [retire_begin, retire_end] = champsim::get_span_p(std::cbegin(ROB), std::cend(ROB), RETIRE_WIDTH, [](const auto& x) { return x.executed == COMPLETED; });
@@ -627,6 +659,15 @@ long O3_CPU::retire_rob()
   }
   auto retire_count = std::distance(retire_begin, retire_end);
   num_retired += retire_count;
+  // Trigger mutation in profiler state
+  if (num_retired - lastRetired >= GlobalProfiler::PROFILER_INTERVAL) {
+    lastRetired = num_retired;
+    if (!warmup) GlobalProfiler::mutate();
+    issued_ireads = 0;
+    issued_dreads = 0;
+    issued_writes = 0;
+    branch_mispredictions = 0;
+  }
   ROB.erase(retire_begin, retire_end);
 
   return retire_count;

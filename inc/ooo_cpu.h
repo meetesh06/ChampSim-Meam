@@ -40,6 +40,7 @@
 #include "operable.h"
 #include "util/lru_table.h"
 #include <type_traits>
+#include "glob_profiler.h"
 
 enum STATUS { INFLIGHT = 1, COMPLETED = 2 };
 
@@ -104,6 +105,12 @@ public:
   uint64_t last_heartbeat_cycle = 0;
   uint64_t last_heartbeat_instr = 0;
   uint64_t next_print_instruction = STAT_PRINTING_PERIOD;
+  // Metrics for profiler -- START
+  uint64_t branch_mispredictions = 0;
+  uint64_t issued_ireads = 0;
+  uint64_t issued_dreads = 0;
+  uint64_t issued_writes = 0;
+  // Metrics for profiler -- END
 
   // instruction
   uint64_t num_retired = 0;
@@ -149,6 +156,8 @@ public:
 
   CacheBus L1I_bus, L1D_bus;
   CACHE* l1i;
+  // Callback to update profiler state
+  MutateState mutation;
 
   void initialize() override final;
   long operate() override final;

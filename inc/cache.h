@@ -36,6 +36,7 @@
 #include "module_impl.h"
 #include "operable.h"
 #include <type_traits>
+#include "glob_profiler.h"
 
 struct cache_stats {
   std::string name;
@@ -174,6 +175,8 @@ public:
   const unsigned pref_activate_mask = (1 << champsim::to_underlying(access_type::LOAD)) | (1 << champsim::to_underlying(access_type::PREFETCH));
 
   using stats_type = cache_stats;
+  // Callback to update profiler state
+  MutateState mutation;
 
   stats_type sim_stats, roi_stats;
 
